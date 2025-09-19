@@ -5,6 +5,7 @@ import { db } from "../../lib/db";
 import { sql } from "drizzle-orm";
 import { timeallowenc } from "../../drizzle/schema";
 import { startOfMonth, endOfMonth } from "date-fns";
+import { logAction } from "../utils/logAction";
 
 export const timeAllowenceRouter = router({
   create: protectedProcedure
@@ -18,7 +19,9 @@ export const timeAllowenceRouter = router({
         reason: z.string().optional(),
       })
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user) throw new Error("Unauthorized");
+
       const { employeeId, sectionId, departmentId, startTime, endTime, reason } = input;
 
       const [startHour, startMinute] = startTime.split(":").map(Number);
@@ -49,12 +52,22 @@ export const timeAllowenceRouter = router({
         reason,
       });
 
-      return { success: true, message: `تم تسجيل الزمنية. تبقى: ${(remaining - usedHours).toFixed(2)} ساعة` };
+      // ⬅️ سجل العملية
+      await logAction(
+        ctx.user.id,
+        ctx.user.name,
+        `أضاف استحقاق وقت للموظف ID=${employeeId} من ${startTime} إلى ${endTime}`
+      );
+
+      return {
+        success: true,
+        message: `تم تسجيل الزمنية. تبقى: ${(remaining - usedHours).toFixed(2)} ساعة`,
+      };
     }),
 
   getBalance: protectedProcedure
     .input(z.number())
-    .query(async ({ input: employeeId }) => {
+    .query(async ({ input: employeeId, ctx }) => {
       const [rows]: any = await db.execute(sql`
         SELECT SUM(TIMESTAMPDIFF(MINUTE, startTime, endTime))/60 as usedHours
         FROM timeallowenc
@@ -65,6 +78,14 @@ export const timeAllowenceRouter = router({
 
       const used = rows[0]?.usedHours || 0;
       const remaining = 4 - used;
+
+      // ⬅️ سجل العملية قراءة الرصيد
+      await logAction(
+        ctx.user!.id,
+        ctx.user!.name,
+        `استعلم عن رصيد استحقاق الوقت للموظف ID=${employeeId}`
+      );
+
       return { allowed: 4, used, remaining: remaining > 0 ? remaining : 0 };
     }),
 });

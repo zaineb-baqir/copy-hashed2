@@ -6,7 +6,9 @@ export async function createTRPCContext(opts: { req: Request }) {
   const match = cookieHeader.match(/token=([^;]+)/);
   const token = match ? match[1] : null;
 
-  if (!token) throw new Error("Unauthorized");
+  if (!token) {
+    return { user: null }; // بدل رمي الخطأ مباشرة
+  }
 
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET ?? "fallback_secret") as {
@@ -15,10 +17,10 @@ export async function createTRPCContext(opts: { req: Request }) {
       role: string;
     };
 
-    return { user: payload }; // ⚡ المهم هنا user وليس userId
+    return { user: payload }; // ⚡ مهم جداً
   } catch (err) {
     console.error("JWT verify error:", err);
-    throw new Error("Unauthorized");
+    return { user: null }; // بدل رمي الخطأ
   }
 }
 

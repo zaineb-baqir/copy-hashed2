@@ -1,21 +1,32 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { router, protectedProcedure } from "../../server/trpc";
 import { db } from "../../lib/db";
 import { department, section, employee, workingdays } from "../../drizzle/schema";
 import { like, eq, and } from "drizzle-orm";
 import { z } from "zod";
+import { logAction } from "../utils/logAction";
+
+// دالة مساعدة لتسجيل الأحداث بأمان
+const safeLog = async (ctx: any, message: string) => {
+  if (ctx.user) {
+    await logAction(ctx.user.id, ctx.user.name, message);
+  }
+};
 
 export const orgRouter = router({
   updateSection: protectedProcedure
     .input(z.object({ id: z.number(), name: z.string() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       await db.update(section).set({ name: input.name }).where(eq(section.id, input.id));
+      await safeLog(ctx, `عدل اسم القسم ID=${input.id} إلى "${input.name}"`);
       return { success: true };
     }),
 
   updateDepartment: protectedProcedure
     .input(z.object({ id: z.number(), name: z.string() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       await db.update(department).set({ name: input.name }).where(eq(department.id, input.id));
+      await safeLog(ctx, `عدل اسم الشعبة ID=${input.id} إلى "${input.name}"`);
       return { success: true };
     }),
 
@@ -23,7 +34,6 @@ export const orgRouter = router({
     .input(z.string())
     .query(async ({ input }) => {
       const q = `%${input}%`;
-
       const sectionsResult = await db.select().from(section).where(like(section.name, q));
       const departmentsResult = await db.select().from(department).where(like(department.name, q));
       const employeesResult = await db.select().from(employee).where(like(employee.name, q));
@@ -80,10 +90,13 @@ export const orgRouter = router({
 
   addSections: protectedProcedure
     .input(z.object({ name: z.string().min(1) }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const existing = await db.select().from(section).where(eq(section.name, input.name));
       if (existing.length > 0) throw new Error("❌ القسم موجود مسبقًا");
+
       const [newSection] = await db.insert(section).values({ name: input.name });
+      await safeLog(ctx, `أضاف قسم جديد: "${input.name}"`);
+
       return newSection;
     }),
 
@@ -91,46 +104,58 @@ export const orgRouter = router({
 
   addDepartment: protectedProcedure
     .input(z.object({ name: z.string().min(1), sectionId: z.number() }))
-    .mutation(async ({ input }) => {
-      const existing = await db.select().from(department).where(and(eq(department.name, input.name), eq(department.sectionId, input.sectionId)));
+    .mutation(async ({ input, ctx }) => {
+      const existing = await db.select()
+        .from(department)
+        .where(and(eq(department.name, input.name), eq(department.sectionId, input.sectionId)));
       if (existing.length > 0) throw new Error("❌ الشعبة موجودة مسبقًا ضمن هذا القسم");
+
       const [newDepartment] = await db.insert(department).values({ name: input.name, sectionId: input.sectionId });
+      await safeLog(ctx, `أضاف شعبة جديدة "${input.name}" ضمن القسم ID=${input.sectionId}`);
+
       return newDepartment;
     }),
 
   transferEmployee: protectedProcedure
     .input(z.object({ employeeId: z.number(), newSectionId: z.number(), newDepartmentId: z.number() }))
-    .mutation(async ({ input }) => {
-      await db.update(employee).set({ sectionId: input.newSectionId, departmentId: input.newDepartmentId }).where(eq(employee.id, input.employeeId));
+    .mutation(async ({ input, ctx }) => {
+      await db.update(employee)
+        .set({ sectionId: input.newSectionId, departmentId: input.newDepartmentId })
+        .where(eq(employee.id, input.employeeId));
+      await safeLog(ctx, `نقل الموظف ID=${input.employeeId} إلى القسم ID=${input.newSectionId} والشعبة ID=${input.newDepartmentId}`);
     }),
 
   transferDepartment: protectedProcedure
     .input(z.object({ departmentId: z.number(), newSectionId: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       await db.update(department).set({ sectionId: input.newSectionId }).where(eq(department.id, input.departmentId));
       await db.update(employee).set({ sectionId: input.newSectionId }).where(eq(employee.departmentId, input.departmentId));
+      await safeLog(ctx, `نقل الشعبة ID=${input.departmentId} إلى القسم ID=${input.newSectionId}`);
     }),
 
   getAllDepartments: protectedProcedure.query(async () => db.select().from(department)),
 
   deleteDepartment: protectedProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const employeesInDept = await db.select().from(employee).where(eq(employee.departmentId, input.id));
       if (employeesInDept.length > 0) throw new Error("❌ لا يمكن حذف الشعبة لأنها تحتوي على موظفين");
-      return db.delete(department).where(eq(department.id, input.id));
+
+      await db.delete(department).where(eq(department.id, input.id));
+      await safeLog(ctx, `حذف الشعبة ID=${input.id}`);
     }),
 
   deleteSection: protectedProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const childDepartments = await db.select().from(department).where(eq(department.sectionId, input.id));
       if (childDepartments.length > 0) throw new Error("❌ لا يمكن حذف القسم لأنه يحتوي على شعب");
 
       const employeesInSection = await db.select().from(employee).where(eq(employee.sectionId, input.id));
       if (employeesInSection.length > 0) throw new Error("❌ لا يمكن حذف القسم لأنه يحتوي على موظفين");
 
-      return db.delete(section).where(eq(section.id, input.id));
+      await db.delete(section).where(eq(section.id, input.id));
+      await safeLog(ctx, `حذف القسم ID=${input.id}`);
     }),
 
   getDaysWithEmployees: protectedProcedure.query(async () => {

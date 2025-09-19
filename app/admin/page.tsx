@@ -3,7 +3,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { trpc } from "../../app/lib/trpc/client";
+import { trpc } from "../../lib/trpc/client";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 export default function AdminDashboard() {

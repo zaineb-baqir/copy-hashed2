@@ -2,7 +2,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { trpc } from "../../../app/lib/trpc/client";
+import { trpc } from "../../../lib/trpc/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { router, protectedProcedure, publicProcedure } from "../trpc";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
@@ -6,18 +7,22 @@ import { users } from "../../drizzle/schema";
 import { eq } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import { logAction } from "../utils/logAction";
+
+// دالة مساعدة لتسجيل الأحداث بأمان
+const safeLog = async (ctx: any, message: string) => {
+  if (ctx?.user) {
+    await logAction(ctx.user.id, ctx.user.name, message);
+  }
+};
 
 export const userRouter = router({
-  //================ login =================
   login: publicProcedure
     .input(z.object({ username: z.string(), password: z.string() }))
     .mutation(async ({ input }) => {
-      console.log("Login input:", input);
-
       const user = await db.query.users.findFirst({
         where: eq(users.name, input.username),
       });
-      console.log("Found user:", user);
 
       if (!user) {
         throw new TRPCError({ code: "NOT_FOUND", message: "المستخدم غير موجود" });
@@ -36,7 +41,8 @@ export const userRouter = router({
         process.env.JWT_SECRET ?? "fallback_secret",
         { expiresIn: "1d" }
       );
-      console.log("Generated token:", token);
+
+      await logAction(user.id, user.name, "تسجيل دخول للنظام");
 
       return {
         token,
@@ -44,7 +50,6 @@ export const userRouter = router({
       };
     }),
 
-  //================ add user =================
   addUser: protectedProcedure
     .input(
       z.object({
@@ -53,7 +58,7 @@ export const userRouter = router({
         role: z.enum(["user", "admin"]),
       })
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const existingUser = await db.query.users.findFirst({
         where: eq(users.name, input.name),
       });
@@ -63,21 +68,23 @@ export const userRouter = router({
       }
 
       const hashedPassword = await bcrypt.hash(input.password, 10);
-      await db.insert(users).values({
+      const [newUserId] = await db.insert(users).values({
         name: input.name,
         password: hashedPassword,
         role: input.role,
-      });
+      }).$returningId();
+
+      await safeLog(ctx, `أضاف مستخدم جديد: ${input.name}`);
 
       return { success: true, message: "User created successfully!" };
     }),
 
-  //================ get all =================
-  getAll: protectedProcedure.query(async () => {
-    return db.query.users.findMany();
+  getAll: protectedProcedure.query(async ({ ctx }) => {
+    const usersList = await db.query.users.findMany();
+    await safeLog(ctx, `عرض قائمة جميع المستخدمين`);
+    return usersList;
   }),
 
-  //================ update user =================
   updateUser: protectedProcedure
     .input(
       z.object({
@@ -87,23 +94,28 @@ export const userRouter = router({
         role: z.string().optional(),
       })
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       if (input.password) {
         input.password = await bcrypt.hash(input.password, 10);
       }
+
       await db.update(users)
         .set(input)
         .where(eq(users.id, input.id));
 
+      await safeLog(ctx, `عدل بيانات المستخدم ID=${input.id}`);
+
       return { success: true, message: "User updated successfully!" };
     }),
 
-  //================ delete user =================
   delete: protectedProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       await db.delete(users)
         .where(eq(users.id, input.id));
+
+      await safeLog(ctx, `حذف المستخدم ID=${input.id}`);
+
       return { success: true };
     }),
 });

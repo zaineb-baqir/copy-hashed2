@@ -1,71 +1,78 @@
-// server/routers/employee.ts
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { z } from "zod";
 import { router, protectedProcedure } from "../../server/trpc";
 import { db } from "../../lib/db";
 import { employee, workingdays, section, department, vacation, timeallowenc } from "../../drizzle/schema";
-import { asc, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
+import { logAction } from "../utils/logAction";  
+
+// دالة مساعدة لتسجيل الأحداث بأمان
+const safeLog = async (ctx: any, message: string) => {
+  if (ctx?.user) {
+    await logAction(ctx.user.id, ctx.user.name, message);
+  }
+};
 
 export const employeeRouter = router({
   // =================== تحديث الموظف ===================
-update: protectedProcedure
-  .input(
-    z.object({
-      id: z.number(),
-      name: z.string().optional(),
-      privilege: z.string().optional(),
-      sectionId: z.number().optional(),
-      departmentId: z.number().optional(),
-      workingDays: z.array(
-        z.object({
-          id: z.number().optional(),
-          day: z.string(),
-          startshift: z.string(),
-          endshift: z.string(),
-        })
-      ).optional(),
-      vacation: z.array(
-        z.object({
-          id: z.number().optional(),
-          type: z.string(),
-          reason: z.string(),
-          dateStart: z.string(),
-          dateEnd: z.string(),
-        })
-      ).optional(),
-      timeallowances: z.array(
-        z.object({
-          id: z.number().optional(),
-          type: z.string(),
-          reason: z.string(),
-          startTime: z.string(),
-          endTime: z.string(),
-        })
-      ).optional(),
-    })
-  )
-  .mutation(async ({ input }) => {
-    const { id, workingDays } = input;
+  update: protectedProcedure
+    .input(
+      z.object({
+        id: z.number(),
+        name: z.string().optional(),
+        privilege: z.string().optional(),
+        sectionId: z.number().optional(),
+        departmentId: z.number().optional(),
+        workingDays: z.array(
+          z.object({
+            id: z.number().optional(),
+            day: z.string(),
+            startshift: z.string(),
+            endshift: z.string(),
+          })
+        ).optional(),
+        vacation: z.array(
+          z.object({
+            id: z.number().optional(),
+            type: z.string(),
+            reason: z.string(),
+            dateStart: z.string(),
+            dateEnd: z.string(),
+          })
+        ).optional(),
+        timeallowances: z.array(
+          z.object({
+            id: z.number().optional(),
+            type: z.string(),
+            reason: z.string(),
+            startTime: z.string(),
+            endTime: z.string(),
+          })
+        ).optional(),
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      const { id, workingDays } = input;
 
-    // تحديث بيانات الموظف
-    await db.update(employee).set({ ...input }).where(eq(employee.id, id));
+      await db.update(employee).set({ ...input }).where(eq(employee.id, id));
 
-    // تحديث أيام العمل إذا موجودة
-    if (workingDays) {
-      await Promise.all(
-        workingDays.map((shift) => {
-          if (shift.id) {
-            return db.update(workingdays)
-              .set({ startshift: shift.startshift, endshift: shift.endshift })
-              .where(eq(workingdays.id, shift.id));
-          }
-          return Promise.resolve(); // لتجنب تمرير undefined
-        })
-      );
-    }
+      if (workingDays) {
+        await Promise.all(
+          workingDays.map((shift) => {
+            if (shift.id) {
+              return db.update(workingdays)
+                .set({ startshift: shift.startshift, endshift: shift.endshift })
+                .where(eq(workingdays.id, shift.id));
+            }
+            return Promise.resolve();
+          })
+        );
+      }
 
-    return { success: true };
-  }),
+      await safeLog(ctx, `عدل بيانات الموظف ID=${id}`);
 
+      return { success: true };
+    }),
 
   // =================== اضافة موظف ===================
   create: protectedProcedure
@@ -84,7 +91,7 @@ update: protectedProcedure
         ),
       })
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const [newEmployee] = await db.insert(employee).values({
         name: input.name,
         privilege: input.privilege,
@@ -92,7 +99,6 @@ update: protectedProcedure
         departmentId: input.departmentId,
       }).$returningId();
 
-      // إدخال أيام العمل
       const workingDaysData = input.workingDays.map((wd) => ({
         day: wd.day,
         startshift: wd.startShift,
@@ -101,38 +107,42 @@ update: protectedProcedure
       }));
       await db.insert(workingdays).values(workingDaysData);
 
+      await safeLog(ctx, `أضاف موظف جديد: ${input.name}`);
+
       return { employeeId: newEmployee.id };
     }),
 
   // =================== جلب كل الموظفين ===================
-  getAll: protectedProcedure.query(async () => {
-    return db.select().from(employee);
+  getAll: protectedProcedure.query(async ({ ctx }) => {
+    const allEmployees = await db.select().from(employee);
+    await safeLog(ctx, "عرض جميع الموظفين");
+    return allEmployees;
   }),
 
   // =================== جلب كل ايام العمل ===================
-  getWorkingDays: protectedProcedure.query(async () => {
-    return db.select().from(workingdays);
+  getWorkingDays: protectedProcedure.query(async ({ ctx }) => {
+    const days = await db.select().from(workingdays);
+    await safeLog(ctx, "عرض جميع أيام العمل");
+    return days;
   }),
 
   // =================== جلب أيام العمل حسب الموظف ===================
- getDayByEmployee: protectedProcedure
-  .input(z.object({ employeeId: z.number() }))
-  .query(async ({ input }) => {
-    return db.query.workingdays.findMany({
-      where: (t: typeof workingdays) => eq(t.employeeId, input.employeeId),
-      columns: {
-        id: true,
-        day: true,
-        startshift: true,
-        endshift: true,
-      },
-      orderBy: (t: typeof workingdays) => asc(t.day),
-    });
-  }),
+  getDayByEmployee: protectedProcedure
+    .input(z.object({ employeeId: z.number() }))
+    .query(async ({ input, ctx }) => {
+      const result = await db.query.workingdays.findMany({
+        where: (fields, { eq }) => eq(fields.employeeId, input.employeeId),
+        columns: { id: true, day: true, startshift: true, endshift: true },
+        orderBy: (fields, { asc }) => asc(fields.day),
+      });
+      await safeLog(ctx, `عرض أيام العمل للموظف ID=${input.employeeId}`);
+      return result;
+    }),
+
   // =================== جلب بيانات الموظف حسب ال id ===================
   getById: protectedProcedure
     .input(z.number())
-    .query(async ({ input: id }) => {
+    .query(async ({ input: id, ctx }) => {
       const emp = await db.query.employee.findFirst({ where: eq(employee.id, id) });
       if (!emp) return null;
 
@@ -143,6 +153,8 @@ update: protectedProcedure
         db.query.vacation.findMany({ where: eq(vacation.employeeId, id) }),
         db.query.timeallowenc.findMany({ where: eq(timeallowenc.employeeId, id) }),
       ]);
+
+      await safeLog(ctx, `عرض بيانات الموظف ID=${id}`);
 
       return {
         ...emp,
@@ -157,8 +169,9 @@ update: protectedProcedure
   // =================== حذف الموظف ===================
   deleteEmployee: protectedProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       await db.delete(employee).where(eq(employee.id, input.id));
+      await safeLog(ctx, `حذف موظف بالرقم ${input.id}`);
       return { success: true };
     }),
 });

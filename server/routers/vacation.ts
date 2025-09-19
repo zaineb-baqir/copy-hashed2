@@ -1,9 +1,10 @@
 import { z } from "zod";
-import { router, protectedProcedure } from "../trpc"; // استبدل publicProcedure بـ protectedProcedure
+import { router, protectedProcedure } from "../trpc";
 import { db } from "../../lib/db";
 import { vacation, vacationBalance } from "../../drizzle/schema";
 import { eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
+import { logAction } from "../utils/logAction"; // ⬅️ استدعاء دالة logAction
 
 const diffInDays = (start: Date, end: Date) => {
   const diffTime = end.getTime() - start.getTime();
@@ -22,7 +23,9 @@ export const vacationRouter = router({
         reason: z.string().optional(),
       })
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+
       const startDate = new Date(input.dateStart);
       const endDate = new Date(input.dateEnd);
       const daysRequested = diffInDays(startDate, endDate);
@@ -88,6 +91,13 @@ export const vacationRouter = router({
         .set({ balance: updatedBalance })
         .where(eq(vacationBalance.employeeId, input.employeeId));
 
+      // ⬅️ سجل العملية في infosystem
+      await logAction(
+        ctx.user.id,
+        ctx.user.name,
+        `قدم طلب إجازة للموظف ID=${input.employeeId} من ${input.dateStart} إلى ${input.dateEnd}`
+      );
+
       return { message: "✅ تم إضافة الإجازة بنجاح.", remainingBalance: updatedBalance };
     }),
 
@@ -138,11 +148,24 @@ export const vacationRouter = router({
 
   adjustEmployeeBalance: protectedProcedure
     .input(z.object({ employeeId: z.number(), adjustment: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+
       const [record] = await db.select().from(vacationBalance).where(eq(vacationBalance.employeeId, input.employeeId)).limit(1);
       if (!record) throw new TRPCError({ code: "NOT_FOUND", message: "الموظف غير موجود" });
+
       const newBalance = record.balance + input.adjustment;
-      await db.update(vacationBalance).set({ balance: newBalance }).where(eq(vacationBalance.employeeId, input.employeeId));
+      await db.update(vacationBalance)
+        .set({ balance: newBalance })
+        .where(eq(vacationBalance.employeeId, input.employeeId));
+
+      // ⬅️ سجل العملية
+      await logAction(
+        ctx.user.id,
+        ctx.user.name,
+        `تم تعديل رصيد إجازة الموظف ID=${input.employeeId} بمقدار ${input.adjustment} يوم`
+      );
+
       return { newBalance };
     }),
 });

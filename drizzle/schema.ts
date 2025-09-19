@@ -1,47 +1,6 @@
-import { mysqlTable, int, varchar, text, time, date, datetime, mysqlEnum, float, json } from "drizzle-orm/mysql-core";
+import { mysqlTable, int, varchar, text, time, date, datetime} from "drizzle-orm/mysql-core";
 import { relations } from "drizzle-orm";
 import { sql } from "drizzle-orm";
-// db/schema/fingerprintDevices.ts
-import { bigint, timestamp } from "drizzle-orm/mysql-core";
-
-export const fingerprintDevices = mysqlTable("fingerprint_devices", {
-  id: bigint("id", { mode: "number" }).primaryKey().autoincrement(),
-  employeeId: bigint("user_id", { mode: "number" }).notNull(),
-  name: varchar("name", { length: 255 }),
-  templateBase64: text("template_base64").notNull(),
-  templateHash: varchar("template_hash", { length: 128 }).notNull(),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
-
-export const attendances = mysqlTable("attendances", {
-  id: bigint("id", { mode: "number" }).primaryKey().autoincrement(),
-  employeeId: bigint("user_id", { mode: "number" }).notNull(),
-  deviceId: bigint("device_id", { mode: "number" }),
-  method: mysqlEnum("method", ["fake-emulator", "real-device", "webauthn", "qr"]).notNull().default("fake-emulator"),
-  checkType: mysqlEnum("check_type", ["in", "out"]).notNull(),
-  checkAt: timestamp("check_at").defaultNow().notNull(),
-  score: float("score"),
-  meta: json("meta"),
-  status: mysqlEnum("status", ["present", "absent"]).default("present"), // ✅ إضافة العمود هنا
-});
-// جدول الموظفين الحاضرين
-export const attendances_present = mysqlTable("attendances_present", {
-  id: bigint("id", { mode: "number" }).primaryKey().autoincrement(),
-  employeeId: bigint("employee_id", { mode: "number" }).notNull(),
-  name: varchar("name", { length: 255 }).notNull(),
-  checkType: mysqlEnum("check_type", ["in", "out"]).notNull(),
-  checkAt: timestamp("check_at").defaultNow().notNull(),
-  status: mysqlEnum("status", ["present", "late"]).notNull(),
-});
-
-// جدول الموظفين الغائبين
-export const attendances_absent = mysqlTable("attendances_absent", {
-  id: bigint("id", { mode: "number" }).primaryKey().autoincrement(),
-  employeeId: bigint("employee_id", { mode: "number" }).notNull(),
-  name: varchar("name", { length: 255 }).notNull(),
-  reason: varchar("reason", { length: 255 }).default("لم يسجل بصمة"),
-});
-
 
 /**
  * users
@@ -159,29 +118,10 @@ export const employeeRelations = relations(employee, ({ one, many }) => ({
   workingdays: many(workingdays),
   vacations: many(vacation),
   timeallowences: many(timeallowenc),
-  fingerprintDevices: many(fingerprintDevices), // كل موظف اله أكثر من بصمة
+  // كل موظف اله أكثر من بصمة
 }));
 
-/* fingerprintDevices relations */
-export const fingerprintDevicesRelations = relations(fingerprintDevices, ({ one, many }) => ({
-  employee: one(employee, {
-    fields: [fingerprintDevices.employeeId],
-    references: [employee.id],
-  }),
-  attendances: many(attendances), // الجهاز الواحد اله سجلات حضور
-}));
 
-/* attendances relations */
-export const attendancesRelations = relations(attendances, ({ one }) => ({
-  employee: one(employee, {
-    fields: [attendances.employeeId],
-    references: [employee.id],
-  }),
-  device: one(fingerprintDevices, {
-    fields: [attendances.deviceId],
-    references: [fingerprintDevices.id],
-  }),
-}));
 
 /* section relations */
 export const sectionRelations = relations(section, ({ many }) => ({
@@ -254,19 +194,5 @@ export const vacationBalanceRelations = relations(vacationBalance, ({ one }) => 
   }),
   
 }));
-/* attendances_present relations */
-export const attendancesPresentRelations = relations(attendances_present, ({ one }) => ({
-  employee: one(employee, {
-    fields: [attendances_present.employeeId],
-    references: [employee.id],
-  }),
-}));
 
-/* attendances_absent relations */
-export const attendancesAbsentRelations = relations(attendances_absent, ({ one }) => ({
-  employee: one(employee, {
-    fields: [attendances_absent.employeeId],
-    references: [employee.id],
-  }),
-}));
 
